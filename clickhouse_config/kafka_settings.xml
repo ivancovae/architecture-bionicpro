@@ -1,0 +1,9 @@
+<clickhouse>
+    <kafka>
+        <!-- Глобальная настройка для всех Kafka-таблиц -->
+        <auto_offset_reset>earliest</auto_offset_reset>
+
+        <!-- Также можно указать и другие настройки librdkafka, если нужно -->
+        <!-- <security_protocol>SASL_SSL</security_protocol> -->
+    </kafka>
+</clickhouse>

@@ -1,0 +1,21 @@
+[project]
+name = "reports-api"
+version = "0.1.0"
+description = "Reports API для генерации отчетов на основе данных из ClickHouse OLAP БД"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.116.0",
+    "uvicorn>=0.38.0",
+    "pyjwt[crypto]>=2.9.0",
+    "httpx>=0.27.0",
+    "clickhouse-connect>=0.7.0",
+    "minio>=7.2.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "sqlalchemy[asyncio]>=2.0.44",
+    "sqlmodel>=0.0.22",
+    "psycopg2-binary>=2.9.9",
+    "requests>=2.31.0",
+    "python-multipart>=0.0.6",
+    "python-dateutil>=2.9.0",
+]

@@ -1,2 +1,11 @@
 /postgres-keycloak-data
-2024__yandex-architecture-sso.code-workspace
+/uv.lock
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/inspectionProfiles/Project_Default.xml
+/.idea/.gitignore
+/.idea/architecture-bionicpro.iml
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/vcs.xml
+/.idea/jsonSchemas.xml
+/reports_api/uv.lock

@@ -1,0 +1,121 @@
+# Initialize LDAP structure with roles
+
+# Create technical service account for Keycloak (read-only)
+dn: cn=keycloak-reader,dc=china,dc=local
+objectClass: simpleSecurityObject
+objectClass: organizationalRole
+cn: keycloak-reader
+userPassword: keycloak_reader_pass
+description: Read-only service account for Keycloak LDAP federation
+
+dn: ou=groups,dc=china,dc=local
+objectClass: organizationalUnit
+ou: groups
+description: Groups organizational unit
+
+dn: ou=employees,dc=china,dc=local
+objectClass: organizationalUnit
+ou: employees
+description: Employees organizational unit
+
+dn: ou=customers,dc=china,dc=local
+objectClass: organizationalUnit
+ou: customers
+description: Customers organizational unit
+
+# Create employee users
+dn: cn=employee1,ou=employees,dc=china,dc=local
+objectClass: inetOrgPerson
+objectClass: person
+objectClass: organizationalPerson
+cn: employee1
+sn: Employee
+givenName: Employee
+mail: employee1@bionicpro.zm
+userPassword: employee1_password
+employeeNumber: e1a2b3c4-5d6e-7f8a-9b0c-1d2e3f4a5b6c
+
+dn: cn=employee2,ou=employees,dc=china,dc=local
+objectClass: inetOrgPerson
+objectClass: person
+objectClass: organizationalPerson
+cn: employee2
+sn: Employee
+givenName: Employee
+mail: employee2@bionicpro.zm
+userPassword: employee2_password
+employeeNumber: f2b3c4d5-6e7f-8a9b-0c1d-2e3f4a5b6c7d
+
+dn: cn=employee3,ou=employees,dc=china,dc=local
+objectClass: inetOrgPerson
+objectClass: person
+objectClass: organizationalPerson
+cn: employee3
+sn: Employee
+givenName: Employee
+mail: employee3@bionicpro.zm
+userPassword: employee3_password
+employeeNumber: a3b4c5d6-7e8f-9a0b-1c2d-3e4f5a6b7c8d
+
+# Create customer users
+dn: cn=customer1,ou=customers,dc=china,dc=local
+objectClass: inetOrgPerson
+objectClass: person
+objectClass: organizationalPerson
+cn: customer1
+sn: Customer
+givenName: Customer
+mail: customer1@bionicpro.zm
+userPassword: customer1_password
+employeeNumber: 13737288-edf4-4b14-82ad-8590a4d7c306
+
+dn: cn=customer2,ou=customers,dc=china,dc=local
+objectClass: inetOrgPerson
+objectClass: person
+objectClass: organizationalPerson
+cn: customer2
+sn: Customer
+givenName: Customer
+mail: customer2@bionicpro.zm
+userPassword: customer2_password
+employeeNumber: 57e75ff3-16c7-4a02-a2ad-62f8e274c3dd
+
+dn: cn=customer3,ou=customers,dc=china,dc=local
+objectClass: inetOrgPerson
+objectClass: person
+objectClass: organizationalPerson
+cn: customer3
+sn: Customer
+givenName: Customer
+mail: customer3@bionicpro.zm
+userPassword: customer3_password
+employeeNumber: 4f1228fa-89ff-49eb-a27b-876ff84359a2
+
+# Create role groups with nested hierarchy
+# administrators ⊂ employees ⊂ customers
+
+dn: cn=administrators,ou=groups,dc=china,dc=local
+objectClass: groupOfNames
+cn: administrators
+description: Administrator role group (nested in employees)
+member: cn=admin,dc=china,dc=local
+
+dn: cn=employees,ou=groups,dc=china,dc=local
+objectClass: groupOfNames
+cn: employees
+description: Employee role group (nested in customers)
+member: cn=admin,dc=china,dc=local
+member: cn=administrators,ou=groups,dc=china,dc=local
+member: cn=employee1,ou=employees,dc=china,dc=local
+member: cn=employee2,ou=employees,dc=china,dc=local
+member: cn=employee3,ou=employees,dc=china,dc=local
+
+dn: cn=customers,ou=groups,dc=china,dc=local
+objectClass: groupOfNames
+cn: customers
+description: Customer role group (top level)
+member: cn=admin,dc=china,dc=local
+member: cn=employees,ou=groups,dc=china,dc=local
+member: cn=customer1,ou=customers,dc=china,dc=local
+member: cn=customer2,ou=customers,dc=china,dc=local
+member: cn=customer3,ou=customers,dc=china,dc=local

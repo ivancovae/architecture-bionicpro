@@ -1,0 +1,1 @@
+pkill -f "auth_proxy|crm_api|telemetry_api|reports_api"

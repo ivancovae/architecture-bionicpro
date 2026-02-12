@@ -1,42 +1,581 @@
-version: '3.8'
-
 services:
-  keycloak_db:
+  keycloak-db:
+    container_name: keycloak-db
     image: postgres:14
     environment:
       POSTGRES_DB: keycloak_db
       POSTGRES_USER: keycloak_user
       POSTGRES_PASSWORD: keycloak_password
-    volumes:
-      - ./postgres-keycloak-data:/var/lib/postgresql/data
+#    volumes:
+#      - ./postgres-keycloak-data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
   keycloak:
-    image: quay.io/keycloak/keycloak:21.1
+    container_name: keycloak
+    image: quay.io/keycloak/keycloak:26.4
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak_db:5432/keycloak_db
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak_db
       KC_DB_USERNAME: keycloak_user
       KC_DB_PASSWORD: keycloak_password
+      # Frontend URL для публичного доступа (используется как issuer в токенах)
+      KC_HOSTNAME_URL: http://localhost:8080
+      KC_HOSTNAME_ADMIN_URL: http://localhost:8080
+      # Отключаем строгую проверку hostname для dev-режима
+      KC_HOSTNAME_STRICT: "false"
     command: 
       - start-dev
+      - --hostname=http://localhost:8080  # frontend URL
       - --import-realm
     volumes:
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c 'exec 3<>/dev/tcp/localhost/8080'" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
     depends_on:
-      - keycloak_db
-  frontend:
+      - keycloak-db
+  openldap-china:
+    container_name: openldap-china
+    image: osixia/openldap:1.5.0
+    environment:
+      LDAP_ORGANISATION: "China Company"
+      LDAP_DOMAIN: "china.local"
+      LDAP_ADMIN_PASSWORD: "admin123"
+      LDAP_TLS: "false"
+      LDAP_SEED_INTERNAL_LDIF_PATH: "/seed-ldif"
+    volumes:
+#      - ./ldap/data:/var/lib/ldap
+#      - ./ldap/config:/etc/ldap/slapd.d
+      - ./ldap:/seed-ldif
+    ports:
+      - "389:389"
+  phpldapadmin:
+    container_name: phpldapadmin
+    image: osixia/phpldapadmin:latest
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: openldap-china
+      PHPLDAPADMIN_HTTPS: "false"
+    ports:
+      - "8081:80"
+    depends_on:
+      - openldap-china
+  redis:
+    # Redis для хранения сессий auth_proxy
+    container_name: redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"  # Порт Redis
+    command: redis-server --appendonly yes  # Включаем persistence
+    # volumes:
+    #   - ./redis-data:/data  # Персистентное хранилище (раскомментировать при необходимости)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]  # Проверка здоровья Redis
+      interval: 5s
+      timeout: 3s
+      retries: 5
+#  frontend:
+#    build:
+#      context: ./frontend
+#      dockerfile: Dockerfile
+#    ports:
+#      - "3000:3000"
+#    environment:
+#      REACT_APP_API_URL: http://localhost:8000
+#      REACT_APP_KEYCLOAK_URL: http://localhost:8080
+#      REACT_APP_KEYCLOAK_REALM: reports-realm
+#      REACT_APP_KEYCLOAK_CLIENT_ID: reports-frontend
+
+  crm-db:
+    # PostgreSQL для CRM-системы и интернет-магазина (с поддержкой репликации для Debezium)
+    container_name: crm-db
+    image: postgres:17
+    environment:
+      POSTGRES_DB: crm_db  # Имя базы данных
+      POSTGRES_USER: crm_user  # Пользователь БД
+      POSTGRES_PASSWORD: crm_password  # Пароль пользователя
+    command:
+      # Запуск с кастомной конфигурацией
+      - "postgres"
+      - "-c"
+      - "config_file=/etc/postgresql/postgresql.conf"
+    volumes:
+      # Конфигурация PostgreSQL для включения логической репликации
+      - ./crm_db/postgresql.conf:/etc/postgresql/postgresql.conf
+      # Скрипт инициализации для настройки репликации
+      - ./crm_db/init.sql:/docker-entrypoint-initdb.d/init.sql
+#        - ./postgres-crm-data:/var/lib/postgresql/data  # Персистентное хранилище данных
+    ports:
+      - "5444:5432"  # Порт для подключения к CRM DB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm_user -d crm_db"]  # Проверка готовности PostgreSQL
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  
+  telemetry-db:
+    # PostgreSQL для хранения телеметрии с бионических протезов (с поддержкой репликации для Debezium)
+    container_name: telemetry-db
+    image: postgres:17
+    environment:
+      POSTGRES_DB: telemetry_db  # Имя базы данных
+      POSTGRES_USER: telemetry_user  # Пользователь БД
+      POSTGRES_PASSWORD: telemetry_password  # Пароль пользователя
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"  # Включаем логическую репликацию для Debezium
+    volumes:
+      # Конфигурация PostgreSQL для включения логической репликации
+      - ./telemetry_db/postgresql.conf:/etc/postgresql/postgresql.conf
+      # Скрипт инициализации для настройки репликации
+      - ./telemetry_db/init.sql:/docker-entrypoint-initdb.d/init.sql
+#        - ./postgres-telemetry-data:/var/lib/postgresql/data  # Персистентное хранилище данных
+    ports:
+      - "5445:5432"  # Порт для подключения к Telemetry DB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry_user -d telemetry_db"]  # Проверка готовности PostgreSQL
+      interval: 5s
+      timeout: 3s
+      retries: 5
+  crm-api:
+    # Микросервис CRM API для регистрации пользователей
+    container_name: crm-api
     build:
-      context: ./frontend
+      context: ./crm_api  # Папка с Dockerfile и кодом микросервиса
+      dockerfile: Dockerfile  # Dockerfile для сборки образа
+    depends_on:
+      crm-db:
+        condition: service_healthy  # Ждём готовности CRM DB
+    environment:
+      # Переменные окружения для подключения к БД (внутри Docker-сети используется имя сервиса)
+      DB_HOST: crm-db  # Хост базы данных (имя сервиса в Docker Compose)
+      DB_PORT: 5432  # Порт внутри контейнера PostgreSQL
+      DB_NAME: crm_db  # Имя базы данных
+      DB_USER: crm_user  # Пользователь БД
+      DB_PASSWORD: crm_password  # Пароль пользователя
+    ports:
+      - "3001:3001"  # Порт для доступа к CRM API с хоста
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3001/health || exit 1"]  # Проверка работоспособности API
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+  
+  telemetry-api:
+    # Микросервис Telemetry API для сбора телеметрии с бионических протезов
+    container_name: telemetry-api
+    build:
+      context: ./telemetry_api  # Папка с Dockerfile и кодом микросервиса
+      dockerfile: Dockerfile  # Dockerfile для сборки образа
+    depends_on:
+      telemetry-db:
+        condition: service_healthy  # Ждём готовности Telemetry DB
+    environment:
+      # Переменные окружения для подключения к БД (внутри Docker-сети используется имя сервиса)
+      DB_HOST: telemetry-db  # Хост базы данных (имя сервиса в Docker Compose)
+      DB_PORT: 5432  # Порт внутри контейнера PostgreSQL
+      DB_NAME: telemetry_db  # Имя базы данных
+      DB_USER: telemetry_user  # Пользователь БД
+      DB_PASSWORD: telemetry_password  # Пароль пользователя
+    ports:
+      - "3002:3002"  # Порт для доступа к Telemetry API с хоста
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3002/health || exit 1"]  # Проверка работоспособности API
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+  
+  reports-api:
+    # Микросервис Reports API для генерации отчетов на основе данных из ClickHouse
+    container_name: reports-api
+    build:
+      context: ./reports_api  # Папка с Dockerfile и кодом микросервиса
+      dockerfile: Dockerfile  # Dockerfile для сборки образа
+    depends_on:
+      keycloak:
+        condition: service_healthy  # Ждём готовности Keycloak
+      minio:
+        condition: service_started  # Ждём запуска MinIO
+      olap-db:
+        condition: service_healthy  # Ждём готовности ClickHouse
+      crm-db:
+        condition: service_healthy  # Ждём готовности CRM DB для импорта данных
+      telemetry-db:
+        condition: service_healthy  # Ждём готовности Telemetry DB для импорта данных
+    environment:
+      # Переменные окружения для подключения к сервисам (внутри Docker-сети используются имена сервисов)
+      KEYCLOAK_URL: http://keycloak:8080  # URL Keycloak внутри Docker-сети
+      CLICKHOUSE_HOST: olap-db  # Хост ClickHouse (имя сервиса в Docker Compose)
+      CLICKHOUSE_PORT: 8123  # HTTP-порт ClickHouse
+      CLICKHOUSE_USER: default  # Пользователь ClickHouse
+      CLICKHOUSE_PASSWORD: clickhouse_password  # Пароль ClickHouse
+      MINIO_HOST: minio:9000  # Хост MinIO (имя сервиса в Docker Compose)
+      MINIO_ACCESS_KEY: minio_user  # Access key MinIO
+      MINIO_SECRET_KEY: minio_password  # Secret key MinIO
+      KAFKA_BROKER: kafka:9093  # Адрес Kafka-брокера (INTERNAL listener)
+      # Переменные для подключения к CRM DB (для импорта данных)
+      CRM_DB_HOST: crm-db
+      CRM_DB_PORT: 5432
+      CRM_DB_NAME: crm_db
+      CRM_DB_USER: crm_user
+      CRM_DB_PASSWORD: crm_password
+      # Переменные для подключения к Telemetry DB (для импорта данных)
+      TELEMETRY_DB_HOST: telemetry-db
+      TELEMETRY_DB_PORT: 5432
+      TELEMETRY_DB_NAME: telemetry_db
+      TELEMETRY_DB_USER: telemetry_user
+      TELEMETRY_DB_PASSWORD: telemetry_password
+    ports:
+      - "3003:3003"  # Порт для доступа к Reports API с хоста
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3003/ || exit 1"]  # Проверка работоспособности API
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+  
+  olap-db:
+    # ClickHouse для OLAP-аналитики (данные импортируются из CRM и Telemetry БД)
+    container_name: olap-db
+    image: clickhouse/clickhouse-server:latest
+    environment:
+      CLICKHOUSE_DB: default  # База данных по умолчанию
+      CLICKHOUSE_USER: default  # Пользователь по умолчанию
+      CLICKHOUSE_PASSWORD: "clickhouse_password"  # Пароль для разработки
+    ports:
+      - "8123:8123"  # HTTP-интерфейс для clickhouse-connect
+      - "8443:8443"
+      - "9431:9000"  # Native-протокол
+    volumes:
+#      - ./clickhouse-data:/var/lib/clickhouse  # Персистентное хранилище данных
+      - ./clickhouse_config/kafka_settings.xml:/etc/clickhouse-server/config.d/kafka_settings.xml
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --password clickhouse_password --query 'SELECT 1'"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      debezium:
+        condition: service_healthy  # Ждём готовности Debezium (чтобы данные начали поступать)
+  # Zookeeper - координатор для Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.7.0  # Последняя версия Confluent Platform
+    container_name: zookeeper
+    environment:
+      # ID узла Zookeeper
+      ZOOKEEPER_CLIENT_PORT: 2181
+      # Интервал сохранения снимков состояния
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      # Проверка доступности Zookeeper
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  
+  # Kafka - брокер сообщений
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0  # Последняя версия Confluent Platform
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      # Порт для внешних подключений
+      - "9092:9092"
+      # Порт для внутренних подключений
+      - "9093:9093"
+    environment:
+      # Адрес Zookeeper
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Конфигурация слушателей (внешний и внутренний)
+      KAFKA_LISTENERS: EXTERNAL://0.0.0.0:9092,INTERNAL://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9092,INTERNAL://kafka:9093
+      # Протоколы безопасности для слушателей
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+      # Протокол для внутренних коммуникаций между брокерами
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # ID брокера
+      KAFKA_BROKER_ID: 1
+      # Отключаем автоматическое создание топиков
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Количество партиций по умолчанию
+      KAFKA_NUM_PARTITIONS: 3
+      # Фактор репликации по умолчанию
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      # Минимальное количество синхронных реплик
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      # Время хранения логов (7 дней)
+      KAFKA_LOG_RETENTION_HOURS: 168
+      # Конфигурация offsets топика
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    healthcheck:
+      # Проверка доступности Kafka
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9093"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+  
+  # Kafka UI - веб-интерфейс для управления Kafka
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest  # Последняя версия Kafka UI
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      # Веб-интерфейс
+      - "8084:8080"
+    environment:
+      # Конфигурация подключения к Kafka
+      KAFKA_CLUSTERS_0_NAME: debezium-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9093
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    healthcheck:
+      # Проверка доступности Kafka UI
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  # Debezium Connect - коннектор для CDC (Change Data Capture)
+  debezium:
+    build:
+      context: ./debezium  # Кастомный образ с автоматической инициализацией коннекторов
+      dockerfile: Dockerfile
+    container_name: debezium
+    depends_on:
+      kafka:
+        condition: service_healthy
+      crm-db:
+        condition: service_healthy
+      telemetry-db:
+        condition: service_healthy
+    ports:
+      # REST API для управления коннекторами
+      - "8083:8083"
+      # Jolokia JMX-HTTP мост для метрик (используется Debezium UI)
+      - "8778:8778"
+    environment:
+      # Конфигурация подключения к Kafka
+      BOOTSTRAP_SERVERS: kafka:9093
+      # Группа для хранения конфигурации коннекторов
+      GROUP_ID: debezium-cluster
+      # Топик для хранения конфигурации
+      CONFIG_STORAGE_TOPIC: debezium_configs
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      # Топик для хранения оффсетов
+      OFFSET_STORAGE_TOPIC: debezium_offsets
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      # Топик для хранения статусов
+      STATUS_STORAGE_TOPIC: debezium_statuses
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      # Формат ключа и значения
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      # Включаем схемы в сообщения
+      KEY_CONVERTER_SCHEMAS_ENABLE: "true"
+      VALUE_CONVERTER_SCHEMAS_ENABLE: "true"
+      # Внутренний конвертер для ключей
+      INTERNAL_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      INTERNAL_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      # Включаем Jolokia для JMX-метрик (используется Debezium UI)
+      # Jolokia уже встроен в образ Debezium, нужно только указать хост и порт
+      KAFKA_OPTS: "-javaagent:/kafka/libs/jolokia-jvm-1.7.2.jar=host=0.0.0.0,port=8778"
+    healthcheck:
+      # Проверка доступности Debezium Connect REST API
+      test: ["CMD", "curl", "-f", "http://localhost:8083/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Debezium UI - веб-интерфейс для управления Debezium
+  debezium-ui:
+    image: debezium/debezium-ui:latest  # Веб-интерфейс для Debezium
+    container_name: debezium-ui
+    depends_on:
+      debezium:
+        condition: service_healthy
+    ports:
+      # Веб-интерфейс Debezium UI
+      - "8088:8080"
+    environment:
+      # URL для подключения к Debezium Connect
+      KAFKA_CONNECT_URIS: http://debezium:8083
+    # Healthcheck отключен, так как в образе нет curl/wget/pgrep
+
+  
+  minio:
+    container_name: minio
+    build:
+      context: ./minio
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "9000:9000"
+      - "9001:9001"
+#    volumes:
+#      - minio_storage:/data
     environment:
-      REACT_APP_API_URL: http://localhost:8000
-      REACT_APP_KEYCLOAK_URL: http://localhost:8080
-      REACT_APP_KEYCLOAK_REALM: reports-realm
-      REACT_APP_KEYCLOAK_CLIENT_ID: reports-frontend
+      MINIO_ROOT_USER: minio_user
+      MINIO_ROOT_PASSWORD: minio_password
+      # Временно отключаем OIDC для тестирования базовой функциональности
+      # MINIO_IDENTITY_OPENID_CLAIM_NAME: "policy"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  minio-nginx:
+    # Nginx reverse proxy с JWT-валидацией для доступа к MinIO
+    # Использует OpenResty (nginx + Lua) для проверки JWT-токенов и прав доступа
+    container_name: minio-nginx
+    build:
+      context: ./minio_nginx  # Папка с Dockerfile и конфигурацией nginx
+      dockerfile: Dockerfile  # Dockerfile для сборки образа с OpenResty
+    depends_on:
+      minio:
+        condition: service_healthy  # Ждём готовности MinIO
+    ports:
+      - "9002:9001"  # Порт 9002 на хосте -> порт 9001 в контейнере (nginx reverse proxy)
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'nginx: master process' || exit 1"]  # Проверка, что nginx процесс запущен
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  
+  bionicpro-frontend:
+    # Фронтенд-приложение на React с интеграцией Keycloak
+    container_name: bionicpro-frontend
+    build:
+      context: ./bionicpro_frontend  # Папка с Dockerfile и кодом фронтенда
+      dockerfile: Dockerfile  # Dockerfile для сборки образа
+    depends_on:
+      keycloak:
+        condition: service_healthy  # Ждём готовности Keycloak
+    environment:
+      # Переменные окружения для фронтенда (если нужны)
+      VITE_KEYCLOAK_URL: http://localhost:8080  # URL Keycloak для браузера
+      VITE_KEYCLOAK_REALM: reports-realm  # Realm Keycloak
+      VITE_KEYCLOAK_CLIENT_ID: reports-frontend  # Client ID
+    ports:
+      - "5173:5173"  # Порт для доступа к фронтенду с хоста
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5173/ || exit 1"]  # Проверка работоспособности фронтенда
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+  
+  auth-proxy:
+    # Прокси-сервис для авторизации с OIDC и управлением сессиями
+    container_name: auth-proxy
+    build:
+      context: ./auth_proxy  # Папка с Dockerfile и кодом auth_proxy
+      dockerfile: Dockerfile  # Dockerfile для сборки образа
+    depends_on:
+      bionicpro-frontend:
+        condition: service_healthy  # Ждём готовности фронтенда
+      keycloak:
+        condition: service_healthy  # Ждём готовности Keycloak
+      reports-api:
+        condition: service_healthy  # Ждём готовности Reports API
+      redis:
+        condition: service_started  # Ждём запуска Redis
+    environment:
+      # Переменные окружения для auth_proxy
+      AUTH_PROXY_KEYCLOAK_URL: http://keycloak:8080  # URL Keycloak внутри Docker-сети (для server-to-server)
+      AUTH_PROXY_KEYCLOAK_PUBLIC_URL: http://localhost:8080  # Публичный URL Keycloak для браузера
+      AUTH_PROXY_KEYCLOAK_REALM: reports-realm  # Realm Keycloak
+      AUTH_PROXY_CLIENT_ID: reports-frontend  # Client ID
+      AUTH_PROXY_CLIENT_SECRET: ""  # Client secret (пустой для public client)
+      AUTH_PROXY_REDIS_HOST: redis  # Хост Redis (имя сервиса в Docker Compose)
+      AUTH_PROXY_REDIS_PORT: 6379  # Порт Redis
+      AUTH_PROXY_REDIS_PASSWORD: ""  # Пароль Redis (если установлен)
+      AUTH_PROXY_FRONTEND_URL: http://bionicpro-frontend:5173  # Внутренний URL фронтенда (имя сервиса Docker)
+      AUTH_PROXY_FRONTEND_PUBLIC_URL: http://localhost:3000  # URL фронтенда для браузера (через auth_proxy)
+      AUTH_PROXY_SESSION_SECRET_KEY: "your-secret-key-change-in-production"  # Секретный ключ для сессий
+      AUTH_PROXY_ENCRYPTION_KEY: ""  # Ключ шифрования токенов (опционально)
+    ports:
+      - "3000:3000"  # Порт для доступа к auth_proxy с хоста
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]  # Проверка работоспособности auth_proxy
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+  
+  # Apache Airflow Standalone - всё-в-одном контейнер с Airflow 3.1.3
+  airflow-standalone:
+    container_name: airflow-standalone
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    depends_on:
+      crm-api:
+        condition: service_healthy
+      telemetry-api:
+        condition: service_healthy
+      olap-db:
+        condition: service_healthy
+    environment:
+      # Отключаем примеры DAG'ов
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      # Добавляем пути к микросервисам в PYTHONPATH
+      PYTHONPATH: "/home/airflow:/home/airflow/airflow"
+      # Переменные для подключения к БД из DAG'ов
+      CRM_DB_HOST: crm-db
+      CRM_DB_PORT: 5432
+      CRM_DB_NAME: crm_db
+      CRM_DB_USER: crm_user
+      CRM_DB_PASSWORD: crm_password
+      TELEMETRY_DB_HOST: telemetry-db
+      TELEMETRY_DB_PORT: 5432
+      TELEMETRY_DB_NAME: telemetry_db
+      TELEMETRY_DB_USER: telemetry_user
+      TELEMETRY_DB_PASSWORD: telemetry_password
+      CLICKHOUSE_HOST: olap-db
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse_password
+      # Пользователь и пароль по умолчанию для Airflow standalone
+#      AIRFLOW__SIMPLE_AUTH_MANAGER__DEFAULT_ADMIN_PASSWORD: airflow_admin_password
+    volumes:
+      # Монтируем папку с DAG'ами из ./airflow/dags в ~/airflow/dags контейнера
+      - ./airflow/dags:/home/airflow/airflow/dags
+      # Монтируем папки с кодом микросервисов для импорта моделей
+      - ./crm_api:/home/airflow/crm_api
+      - ./telemetry_api:/home/airflow/telemetry_api
+      # Монтируем кастомный entrypoint скрипт
+      - ./airflow/standalone_entrypoint.sh:/opt/airflow/standalone_entrypoint.sh
+    ports:
+      - "8082:8080"  # Порт для доступа к Airflow Webserver
+    entrypoint: ["/bin/bash"]
+    command: ["/opt/airflow/standalone_entrypoint.sh"]  # Запускаем кастомный entrypoint
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+#volumes:
+#  minio_storage: {}

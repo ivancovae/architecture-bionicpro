@@ -1,0 +1,18 @@
+[project]
+name = "auth_proxy"
+version = "0.1.0"
+description = "Auth Proxy service with OIDC and session management"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.6",
+    "uvicorn>=0.34.0",
+    "httpx>=0.28.1",
+    "pyjwt>=2.10.1",
+    "cryptography>=44.0.0",
+    "redis>=5.2.1",
+    "pydantic-settings>=2.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
